@@ -1,0 +1,13 @@
+name: McFriends-Hearts-Plugin
+version: 1.0.0
+main: de.mcfriends.hearts.McFriendsHeartsPlugin
+api-version: '1.21'
+description: Separate blue lives system for McFriends
+commands:
+  nation:
+    description: McFriends hearts commands
+    usage: /nation hearts set <Spieler> <1|2|3>
+permissions:
+  mcfriends.hearts.admin:
+    description: Allows changing a player's blue lives
+    default: op
