@@ -29,16 +29,9 @@ public final class McFriendsHeartsPlugin extends JavaPlugin
         implements Listener, CommandExecutor, TabCompleter {
 
     private static final int START_LIVES = 3;
-
-    // Exact glyphs used by the supplied resource pack.
-    // active_heart   = blue heart
-    // inactive_heart = grey heart
     private static final char ACTIVE_HEART = '\uE01B';
     private static final char INACTIVE_HEART = '\uE01C';
-
-    // Refresh the ActionBar continuously so the hearts stay visible.
-    // 10 ticks = 0.5 seconds.
-    private static final long DISPLAY_REFRESH_TICKS = 10L;
+    private static final long DISPLAY_REFRESH_TICKS = 1L;
 
     private final Map<UUID, BukkitTask> displayTasks = new HashMap<>();
 
@@ -72,18 +65,14 @@ public final class McFriendsHeartsPlugin extends JavaPlugin
             return START_LIVES;
         }
 
-        return Math.max(
-                0,
-                Math.min(
-                        3,
-                        getConfig().getInt("players." + uuid, START_LIVES)
-                )
-        );
+        return Math.max(0, Math.min(
+                3,
+                getConfig().getInt("players." + uuid, START_LIVES)
+        ));
     }
 
     private void setLives(UUID uuid, int lives) {
         lives = Math.max(0, Math.min(3, lives));
-
         getConfig().set("players." + uuid, lives);
         saveConfig();
 
@@ -93,8 +82,11 @@ public final class McFriendsHeartsPlugin extends JavaPlugin
         }
     }
 
-    private String buildHeartDisplay(Player player) {
+    private void showLives(Player player) {
+        if (!player.isOnline()) return;
+
         int lives = getLives(player.getUniqueId());
+        if (lives <= 0) return;
 
         StringBuilder display = new StringBuilder(3);
 
@@ -102,29 +94,13 @@ public final class McFriendsHeartsPlugin extends JavaPlugin
             display.append(i < lives ? ACTIVE_HEART : INACTIVE_HEART);
         }
 
-        return display.toString();
-    }
-
-    private void showLives(Player player) {
-        if (!player.isOnline()) {
-            return;
-        }
-
-        int lives = getLives(player.getUniqueId());
-
-        if (lives <= 0) {
-            return;
-        }
-
-        player.sendActionBar(Component.text(buildHeartDisplay(player)));
+        player.sendActionBar(Component.text(display.toString()));
     }
 
     private void startHeartDisplay(Player player) {
         UUID uuid = player.getUniqueId();
 
         stopHeartDisplay(player);
-
-        // Show immediately.
         showLives(player);
 
         BukkitTask task = Bukkit.getScheduler().runTaskTimer(
@@ -140,7 +116,6 @@ public final class McFriendsHeartsPlugin extends JavaPlugin
                         return;
                     }
 
-                    // Keep the three blue/grey hearts permanently visible.
                     showLives(player);
                 },
                 DISPLAY_REFRESH_TICKS,
@@ -151,9 +126,7 @@ public final class McFriendsHeartsPlugin extends JavaPlugin
     }
 
     private void stopHeartDisplay(Player player) {
-        UUID uuid = player.getUniqueId();
-        BukkitTask oldTask = displayTasks.remove(uuid);
-
+        BukkitTask oldTask = displayTasks.remove(player.getUniqueId());
         if (oldTask != null) {
             oldTask.cancel();
         }
@@ -164,15 +137,11 @@ public final class McFriendsHeartsPlugin extends JavaPlugin
         Player player = event.getPlayer();
         UUID uuid = player.getUniqueId();
 
-        // First-ever join gets 3 lives.
         if (!hasStoredLives(uuid)) {
             setLives(uuid, START_LIVES);
         }
 
-        int lives = getLives(uuid);
-
-        // Zero lives = blocked from joining.
-        if (lives <= 0) {
+        if (getLives(uuid) <= 0) {
             stopHeartDisplay(player);
 
             Bukkit.getScheduler().runTask(
@@ -189,7 +158,6 @@ public final class McFriendsHeartsPlugin extends JavaPlugin
             return;
         }
 
-        // Do NOT modify MAX_HEALTH. Normal Minecraft health stays exactly normal.
         startHeartDisplay(player);
     }
 
@@ -200,11 +168,8 @@ public final class McFriendsHeartsPlugin extends JavaPlugin
         Bukkit.getScheduler().runTask(
                 this,
                 () -> {
-                    int lives = getLives(player.getUniqueId());
-
-                    if (lives <= 0) {
+                    if (getLives(player.getUniqueId()) <= 0) {
                         stopHeartDisplay(player);
-
                         if (player.isOnline()) {
                             player.kick(Component.text(
                                     "Du hast keine Leben mehr!",
@@ -227,9 +192,8 @@ public final class McFriendsHeartsPlugin extends JavaPlugin
     @EventHandler
     public void onPlayerDeath(PlayerDeathEvent event) {
         Player victim = event.getEntity();
-
-        // Only a real PvP kill removes a blue life.
         Player killer = victim.getKiller();
+
         if (killer == null) {
             return;
         }
@@ -269,7 +233,6 @@ public final class McFriendsHeartsPlugin extends JavaPlugin
             return false;
         }
 
-        // /nation hearts set <Spieler> <1|2|3>
         if (args.length == 4
                 && args[0].equalsIgnoreCase("hearts")
                 && args[1].equalsIgnoreCase("set")) {
@@ -304,11 +267,9 @@ public final class McFriendsHeartsPlugin extends JavaPlugin
                 return true;
             }
 
-            // This also revives a player who previously had 0 lives.
             setLives(target.getUniqueId(), amount);
 
             Player online = Bukkit.getPlayer(target.getUniqueId());
-
             if (online != null && online.isOnline()) {
                 startHeartDisplay(online);
             }
