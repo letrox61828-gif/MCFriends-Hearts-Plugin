@@ -1,3 +1,4 @@
+
 package de.mcfriends.hearts;
 
 import net.kyori.adventure.text.Component;
@@ -11,6 +12,7 @@ import org.bukkit.command.PluginCommand;
 import org.bukkit.command.TabCompleter;
 import org.bukkit.entity.Player;
 import org.bukkit.event.EventHandler;
+import org.bukkit.event.EventPriority;
 import org.bukkit.event.Listener;
 import org.bukkit.event.entity.PlayerDeathEvent;
 import org.bukkit.event.player.PlayerJoinEvent;
@@ -21,8 +23,10 @@ import org.bukkit.scheduler.BukkitTask;
 
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 
 public final class McFriendsHeartsPlugin extends JavaPlugin
@@ -34,9 +38,11 @@ public final class McFriendsHeartsPlugin extends JavaPlugin
     private static final long DISPLAY_REFRESH_TICKS = 1L;
 
     private final Map<UUID, BukkitTask> displayTasks = new HashMap<>();
+    private final Set<UUID> combatLifeHandled = new HashSet<>();
 
     @Override
     public void onEnable() {
+        saveDefaultConfig();
         getServer().getPluginManager().registerEvents(this, this);
 
         PluginCommand command = getCommand("nation");
@@ -54,6 +60,7 @@ public final class McFriendsHeartsPlugin extends JavaPlugin
             task.cancel();
         }
         displayTasks.clear();
+        combatLifeHandled.clear();
     }
 
     private boolean hasStoredLives(UUID uuid) {
@@ -79,6 +86,25 @@ public final class McFriendsHeartsPlugin extends JavaPlugin
         Player player = Bukkit.getPlayer(uuid);
         if (player != null && player.isOnline() && lives > 0) {
             startHeartDisplay(player);
+        }
+    }
+
+    /**
+     * Entfernt genau ein Leben. Wird von FriendsCombat bei einem
+     * Tod im Combat aufgerufen.
+     */
+    public void removeLife(Player player) {
+        if (player == null) {
+            return;
+        }
+
+        UUID uuid = player.getUniqueId();
+        combatLifeHandled.add(uuid);
+        int remaining = Math.max(0, getLives(uuid) - 1);
+        setLives(uuid, remaining);
+
+        if (remaining <= 0) {
+            stopHeartDisplay(player);
         }
     }
 
@@ -132,6 +158,22 @@ public final class McFriendsHeartsPlugin extends JavaPlugin
         }
     }
 
+    private void kickIfOutOfLives(Player player) {
+        if (getLives(player.getUniqueId()) > 0) {
+            return;
+        }
+
+        stopHeartDisplay(player);
+        Bukkit.getScheduler().runTask(this, () -> {
+            if (player.isOnline()) {
+                player.kick(Component.text(
+                        "Du hast keine Leben mehr!",
+                        NamedTextColor.RED
+                ));
+            }
+        });
+    }
+
     @EventHandler
     public void onJoin(PlayerJoinEvent event) {
         Player player = event.getPlayer();
@@ -143,18 +185,14 @@ public final class McFriendsHeartsPlugin extends JavaPlugin
 
         if (getLives(uuid) <= 0) {
             stopHeartDisplay(player);
-
-            Bukkit.getScheduler().runTask(
-                    this,
-                    () -> {
-                        if (player.isOnline()) {
-                            player.kick(Component.text(
-                                    "Du hast keine Leben mehr!",
-                                    NamedTextColor.RED
-                            ));
-                        }
-                    }
-            );
+            Bukkit.getScheduler().runTask(this, () -> {
+                if (player.isOnline()) {
+                    player.kick(Component.text(
+                            "Du hast keine Leben mehr!",
+                            NamedTextColor.RED
+                    ));
+                }
+            });
             return;
         }
 
@@ -165,60 +203,52 @@ public final class McFriendsHeartsPlugin extends JavaPlugin
     public void onRespawn(PlayerRespawnEvent event) {
         Player player = event.getPlayer();
 
-        Bukkit.getScheduler().runTask(
-                this,
-                () -> {
-                    if (getLives(player.getUniqueId()) <= 0) {
-                        stopHeartDisplay(player);
-                        if (player.isOnline()) {
-                            player.kick(Component.text(
-                                    "Du hast keine Leben mehr!",
-                                    NamedTextColor.RED
-                            ));
-                        }
-                        return;
-                    }
+        Bukkit.getScheduler().runTask(this, () -> {
+            if (getLives(player.getUniqueId()) <= 0) {
+                kickIfOutOfLives(player);
+                return;
+            }
 
-                    startHeartDisplay(player);
-                }
-        );
+            startHeartDisplay(player);
+        });
     }
 
     @EventHandler
     public void onQuit(PlayerQuitEvent event) {
         stopHeartDisplay(event.getPlayer());
+        combatLifeHandled.remove(event.getPlayer().getUniqueId());
     }
 
-    @EventHandler
+    @EventHandler(priority = EventPriority.MONITOR)
     public void onPlayerDeath(PlayerDeathEvent event) {
         Player victim = event.getEntity();
-        Player killer = victim.getKiller();
+        UUID uuid = victim.getUniqueId();
 
-        if (killer == null) {
+        // FriendsCombat hat das Leben bereits abgezogen.
+        if (combatLifeHandled.remove(uuid)) {
+            kickIfOutOfLives(victim);
             return;
         }
 
-        int remaining = Math.max(
-                0,
-                getLives(victim.getUniqueId()) - 1
-        );
+        // Bisheriges Verhalten: nur Tod durch einen anderen Spieler
+        // zieht außerhalb des Combat-Systems ein Leben ab.
+        if (victim.getKiller() == null) {
+            return;
+        }
 
-        setLives(victim.getUniqueId(), remaining);
+        int remaining = Math.max(0, getLives(uuid) - 1);
+        setLives(uuid, remaining);
 
         if (remaining <= 0) {
             stopHeartDisplay(victim);
-
-            Bukkit.getScheduler().runTask(
-                    this,
-                    () -> {
-                        if (victim.isOnline()) {
-                            victim.kick(Component.text(
-                                    "Du hast keine Leben mehr!",
-                                    NamedTextColor.RED
-                            ));
-                        }
-                    }
-            );
+            Bukkit.getScheduler().runTask(this, () -> {
+                if (victim.isOnline()) {
+                    victim.kick(Component.text(
+                            "Du hast keine Leben mehr!",
+                            NamedTextColor.RED
+                    ));
+                }
+            });
         }
     }
 
